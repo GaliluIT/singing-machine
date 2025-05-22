@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Singing Machine – TF.js Classifier</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js"></script>
+  <style>
+    #controls {
+      margin-top: 10px;
+    }
+    button, select {
+      padding: 10px;
+      margin-right: 10px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Singing Machine – TF.js Classifier</h1>
+  <video id="webcam" autoplay playsinline width="640" height="480"></video>
+  <canvas id="output" width="640" height="480"></canvas>
+
+  <div id="controls">
+    <label for="intendedVowel">Label:</label>
+    <select id="intendedVowel">
+      <option value="A">A</option>
+      <option value="E">E</option>
+      <option value="I">I</option>
+      <option value="O">O</option>
+      <option value="U">U</option>
+    </select>
+
+    <button id="addExample">Add Example</button>
+    <button id="trainModel">Train Model</button>
+    <button id="predict">Predict</button>
+    <span id="prediction" style="font-size: 20px; font-weight: bold;"></span>
+  </div>
+
+  <script type="module">
+    import {
+      FilesetResolver,
+      FaceLandmarker
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('output');
+    const ctx = canvas.getContext('2d');
+    const intendedVowelSelector = document.getElementById("intendedVowel");
+    const predictionSpan = document.getElementById("prediction");
+
+    let faceLandmarker;
+    let currentFeatures = [];
+    let examples = [];
+    let labels = [];
+    let model;
+
+    const labelToIndex = { A: 0, E: 1, I: 2, O: 3, U: 4 };
+    const indexToLabel = ["A", "E", "I", "O", "U"];
+
+    document.getElementById("addExample").addEventListener("click", () => {
+      const label = intendedVowelSelector.value;
+      if (currentFeatures.length === 3) {
+        examples.push(currentFeatures);
+        labels.push(labelToIndex[label]);
+        console.log("Example added for", label, currentFeatures);
+      }
+    });
+
+    document.getElementById("trainModel").addEventListener("click", async () => {
+      const xs = tf.tensor2d(examples);
+      const ys = tf.oneHot(tf.tensor1d(labels, 'int32'), 5);
+
+      model = tf.sequential();
+      model.add(tf.layers.dense({ inputShape: [3], units: 16, activation: 'relu' }));
+      model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+      model.add(tf.layers.dense({ units: 5, activation: 'softmax' }));
+
+      model.compile({ optimizer: 'adam', loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
+      await model.fit(xs, ys, { epochs: 30, shuffle: true });
+      console.log("Model trained.");
+    });
+
+    document.getElementById("predict").addEventListener("click", async () => {
+      if (!model || currentFeatures.length !== 3) return;
+      const input = tf.tensor2d([currentFeatures]);
+      const prediction = model.predict(input);
+      const index = (await prediction.argMax(1).data())[0];
+      predictionSpan.innerText = `Predicted: ${indexToLabel[index]}`;
+    });
+
+    const createFaceLandmarker = async () => {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+      );
+
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+          delegate: "GPU"
+        },
+        outputFaceBlendshapes: true,
+        runningMode: "VIDEO",
+        numFaces: 1
+      });
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      video.onloadeddata = () => {
+        predictWebcam();
+      };
+    };
+
+    const predictWebcam = async () => {
+      const results = await faceLandmarker.detectForVideo(video, Date.now());
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      if (results.faceLandmarks.length > 0) {
+        const landmarks = results.faceLandmarks[0];
+
+        for (const point of landmarks) {
+          ctx.beginPath();
+          ctx.arc(point.x * canvas.width, point.y * canvas.height, 2, 0, 2 * Math.PI);
+          ctx.fillStyle = "cyan";
+          ctx.fill();
+        }
+
+        const topLip = landmarks[13];
+        const bottomLip = landmarks[14];
+        const leftCorner = landmarks[61];
+        const rightCorner = landmarks[291];
+
+        const lipHeight = Math.hypot(bottomLip.x - topLip.x, bottomLip.y - topLip.y);
+        const lipWidth = Math.hypot(rightCorner.x - leftCorner.x, rightCorner.y - leftCorner.y);
+
+        const mouthHeight = lipHeight * canvas.height;
+        const mouthWidth = lipWidth * canvas.width;
+        const ratio = mouthHeight / mouthWidth;
+
+        currentFeatures = [mouthWidth, mouthHeight, ratio];
+      }
+
+      requestAnimationFrame(predictWebcam);
+    };
+
+    createFaceLandmarker();
+  </script>
+</body>
+</html>
