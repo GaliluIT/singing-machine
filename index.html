@@ -2,25 +2,43 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Singing Machine – TF.js Classifier</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js"></script>
+  <title>Singing Machine – TF.js Classifier + Synth + Multimodel</title>
   <style>
-    #controls {
-      margin-top: 10px;
-    }
-    button, select {
+    #controls { margin-top: 10px; }
+    button, select, label, input[type=checkbox], input[type=text] {
       padding: 10px;
       margin-right: 10px;
       font-size: 16px;
     }
+    #rawDataOutput {
+      margin-top: 10px;
+      white-space: pre-wrap;
+      font-family: monospace;
+      background: #f0f0f0;
+      padding: 10px;
+      border: 1px solid #ccc;
+      max-height: 200px;
+      overflow-y: auto;
+    }
   </style>
+  <!-- JSZip for model import/export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
 </head>
 <body>
-  <h1>Singing Machine – TF.js Classifier</h1>
+  <h1>Singing Machine – TF.js Classifier + Synth + Multimodel</h1>
   <video id="webcam" autoplay playsinline width="640" height="480"></video>
   <canvas id="output" width="640" height="480"></canvas>
 
   <div id="controls">
+    <label for="userID">Username:</label>
+    <input type="text" id="userID" placeholder="e.g., user123" />
+
+    <label for="language">Language:</label>
+    <select id="language">
+      <option value="ES">Spanish</option>
+      <option value="EN">English</option>
+    </select>
+
     <label for="intendedVowel">Label:</label>
     <select id="intendedVowel">
       <option value="A">A</option>
@@ -33,117 +51,195 @@
     <button id="addExample">Add Example</button>
     <button id="trainModel">Train Model</button>
     <button id="predict">Predict</button>
+    <button id="saveModel">Save Model</button>
+    <button id="loadModel">Load Model</button>
+    <button id="exportModel">Export Model</button>
+    <button id="listModels">List Saved Models</button>
+    <input type="file" id="importModel" accept=".zip" style="margin-top: 10px;" />
+    <label><input type="checkbox" id="enableSound"> Enable Synthesis</label>
     <span id="prediction" style="font-size: 20px; font-weight: bold;"></span>
   </div>
 
-  <script type="module">
-    import {
-      FilesetResolver,
-      FaceLandmarker
-    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+  <div id="rawDataOutput"></div>
 
+  <script type="module">
+    import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js';
+    import { FilesetResolver, FaceLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
+
+    // DOM refs
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('output');
     const ctx = canvas.getContext('2d');
-    const intendedVowelSelector = document.getElementById("intendedVowel");
-    const predictionSpan = document.getElementById("prediction");
+    const userIDInput = document.getElementById('userID');
+    const languageSelector = document.getElementById('language');
+    const intendedVowelSelector = document.getElementById('intendedVowel');
+    const addExampleBtn = document.getElementById('addExample');
+    const trainModelBtn = document.getElementById('trainModel');
+    const predictBtn = document.getElementById('predict');
+    const saveModelBtn = document.getElementById('saveModel');
+    const loadModelBtn = document.getElementById('loadModel');
+    const exportModelBtn = document.getElementById('exportModel');
+    const listModelsBtn = document.getElementById('listModels');
+    const importInput = document.getElementById('importModel');
+    const enableSoundCheckbox = document.getElementById('enableSound');
+    const predictionSpan = document.getElementById('prediction');
+    const rawDataOutput = document.getElementById('rawDataOutput');
 
-    let faceLandmarker;
+    let faceLandmarker = null;
     let currentFeatures = [];
-    let examples = [];
-    let labels = [];
-    let model;
+    const modelsStore = {};
+    let audioContext = null, oscillator = null;
+    const vowelFrequencies = { A:440, E:660, I:880, O:330, U:220 };
+    let lastVowel = '';
 
-    const labelToIndex = { A: 0, E: 1, I: 2, O: 3, U: 4 };
-    const indexToLabel = ["A", "E", "I", "O", "U"];
+    function getUserKey() {
+      const user = userIDInput.value.trim() || 'default';
+      const lang = languageSelector.value;
+      return `${user}_${lang}`;
+    }
 
-    document.getElementById("addExample").addEventListener("click", () => {
+    function playVowelSound(vowel) {
+      if (!enableSoundCheckbox.checked || vowel === lastVowel) return;
+      lastVowel = vowel;
+      if (!audioContext) audioContext = new (window.AudioContext||window.webkitAudioContext)();
+      if (oscillator) oscillator.stop();
+      oscillator = audioContext.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = vowelFrequencies[vowel] || 440;
+      oscillator.connect(audioContext.destination);
+      oscillator.start(); oscillator.stop(audioContext.currentTime + 0.5);
+    }
+
+    function updateRawDataDisplay() {
+      rawDataOutput.textContent = `Current Features:\n` +
+        `Width: ${currentFeatures[0]?.toFixed(2)}\n` +
+        `Height: ${currentFeatures[1]?.toFixed(2)}\n` +
+        `Ratio: ${currentFeatures[2]?.toFixed(2)}`;
+    }
+
+    // Event handlers for classifier
+    addExampleBtn.addEventListener('click', () => {
+      const key = getUserKey();
       const label = intendedVowelSelector.value;
+      if (!modelsStore[key]) modelsStore[key] = { examples:[], labels:[], model:null };
       if (currentFeatures.length === 3) {
-        examples.push(currentFeatures);
-        labels.push(labelToIndex[label]);
-        console.log("Example added for", label, currentFeatures);
+        modelsStore[key].examples.push(currentFeatures);
+        modelsStore[key].labels.push({A:0,E:1,I:2,O:3,U:4}[label]);
+        console.log(`Added example ${label} for ${key}`, currentFeatures);
       }
     });
 
-    document.getElementById("trainModel").addEventListener("click", async () => {
-      const xs = tf.tensor2d(examples);
-      const ys = tf.oneHot(tf.tensor1d(labels, 'int32'), 5);
-
-      model = tf.sequential();
-      model.add(tf.layers.dense({ inputShape: [3], units: 16, activation: 'relu' }));
-      model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-      model.add(tf.layers.dense({ units: 5, activation: 'softmax' }));
-
-      model.compile({ optimizer: 'adam', loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
-      await model.fit(xs, ys, { epochs: 30, shuffle: true });
-      console.log("Model trained.");
+    trainModelBtn.addEventListener('click', async () => {
+      const key = getUserKey();
+      const data = modelsStore[key]; if(!data?.examples.length) return;
+      const xs = tf.tensor2d(data.examples);
+      const ys = tf.oneHot(tf.tensor1d(data.labels,'int32'),5);
+      const model = tf.sequential();
+      model.add(tf.layers.dense({inputShape:[3],units:16,activation:'relu'}));
+      model.add(tf.layers.dense({units:16,activation:'relu'}));
+      model.add(tf.layers.dense({units:5,activation:'softmax'}));
+      model.compile({optimizer:'adam',loss:'categoricalCrossentropy',metrics:['accuracy']});
+      await model.fit(xs,ys,{epochs:30,shuffle:true});
+      data.model = model;
+      await model.save(`localstorage://${key}`);
+      console.log(`Model trained & saved for ${key}`);
     });
 
-    document.getElementById("predict").addEventListener("click", async () => {
-      if (!model || currentFeatures.length !== 3) return;
-      const input = tf.tensor2d([currentFeatures]);
-      const prediction = model.predict(input);
-      const index = (await prediction.argMax(1).data())[0];
-      predictionSpan.innerText = `Predicted: ${indexToLabel[index]}`;
+    loadModelBtn.addEventListener('click', async () => {
+      const key = getUserKey();
+      try {
+        const m = await tf.loadLayersModel(`localstorage://${key}`);
+        modelsStore[key] = modelsStore[key]||{examples:[],labels:[],model:null};
+        modelsStore[key].model = m;
+        console.log(`Loaded model for ${key}`);
+      } catch {
+        console.error(`No model found for ${key}`);
+      }
     });
 
-    const createFaceLandmarker = async () => {
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-      );
+    exportModelBtn.addEventListener('click', async ()=>{
+      const key = getUserKey(); const m = modelsStore[key]?.model;
+      if(!m) return alert(`No model to export for ${key}`);
+      const handler={async save(artifacts){
+        const zip=new JSZip();
+        zip.file('model.json',JSON.stringify(artifacts.modelTopology));
+        zip.file('weights.bin',new Uint8Array(artifacts.weightData));
+        const blob=await zip.generateAsync({type:'blob'});
+        const link=document.createElement('a'); link.href=URL.createObjectURL(blob);
+        link.download=`${key}_model.zip`; link.click();
+        return {modelArtifactsInfo:{dateSaved:new Date(),modelTopologyType:'JSON',weightDataBytes:artifacts.weightData.byteLength}};
+      }};
+      await m.save(handler);
+    });
 
-      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-          delegate: "GPU"
+    listModelsBtn.addEventListener('click', ()=>{
+      const keys = Object.keys(localStorage).filter(k=>k.startsWith('tensorflowjs_models/'));
+      alert('Saved models:\n'+keys.map(k=>k.replace('tensorflowjs_models/','')).join('\n'));
+    });
+
+    importInput.addEventListener('change', async e => {
+      const file = e.target.files[0]; if(!file) return;
+      const zip = await JSZip.loadAsync(file);
+      const key = getUserKey();
+      const modelJson = await zip.file('model.json').async('string');
+      const weightData = await zip.file('weights.bin').async('arraybuffer');
+      const handler = {load:async()=>({modelTopology:JSON.parse(modelJson),weightData,weightSpecs:[]})};
+      const m = await tf.loadLayersModel(handler);
+      modelsStore[key] = modelsStore[key]||{examples:[],labels:[],model:null}; modelsStore[key].model = m;
+      predictionSpan.innerText = `✅ Imported model for ${key}`;
+    });
+
+    // Webcam + MediaPipe setup
+    async function setupCamera(){
+      const stream = await navigator.mediaDevices.getUserMedia({video:true});
+      video.srcObject = stream; await video.play();
+    }
+
+    async function loadFaceLandmarker(){
+      const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm');
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision,{
+        baseOptions:{
+          modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+          delegate:'GPU'
         },
-        outputFaceBlendshapes: true,
-        runningMode: "VIDEO",
-        numFaces: 1
+        outputFaceBlendshapes:true,
+        runningMode:'VIDEO',
+        numFaces:1
       });
+    }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.srcObject = stream;
-      video.onloadeddata = () => {
-        predictWebcam();
-      };
-    };
-
-    const predictWebcam = async () => {
-      const results = await faceLandmarker.detectForVideo(video, Date.now());
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      if (results.faceLandmarks.length > 0) {
-        const landmarks = results.faceLandmarks[0];
-
-        for (const point of landmarks) {
-          ctx.beginPath();
-          ctx.arc(point.x * canvas.width, point.y * canvas.height, 2, 0, 2 * Math.PI);
-          ctx.fillStyle = "cyan";
-          ctx.fill();
+    async function predictWebcam(){
+      const res = await faceLandmarker.detectForVideo(video, Date.now());
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      if(res.faceLandmarks.length){
+        const lm = res.faceLandmarks[0];
+        lm.forEach(pt => {ctx.beginPath(); ctx.arc(pt.x*canvas.width, pt.y*canvas.height, 2, 0, 2*Math.PI); ctx.fillStyle='cyan'; ctx.fill();});
+        const top=lm[13], bottom=lm[14], left=lm[61], right=lm[291];
+        const h = Math.hypot(bottom.x-top.x, bottom.y-top.y)*canvas.height;
+        const w = Math.hypot(right.x-left.x, right.y-left.y)*canvas.width;
+        const ratio = h/w;
+        currentFeatures = [w,h,ratio]; updateRawDataDisplay();
+        const key = getUserKey(); const data = modelsStore[key];
+        if(data?.model && currentFeatures.length===3){
+          const pred = data.model.predict(tf.tensor2d([currentFeatures]));
+          const idx = (await pred.argMax(1).data())[0];
+          const vowel = ['A','E','I','O','U'][idx];
+          predictionSpan.innerText = `Predicted: ${vowel}`; playVowelSound(vowel);
         }
-
-        const topLip = landmarks[13];
-        const bottomLip = landmarks[14];
-        const leftCorner = landmarks[61];
-        const rightCorner = landmarks[291];
-
-        const lipHeight = Math.hypot(bottomLip.x - topLip.x, bottomLip.y - topLip.y);
-        const lipWidth = Math.hypot(rightCorner.x - leftCorner.x, rightCorner.y - leftCorner.y);
-
-        const mouthHeight = lipHeight * canvas.height;
-        const mouthWidth = lipWidth * canvas.width;
-        const ratio = mouthHeight / mouthWidth;
-
-        currentFeatures = [mouthWidth, mouthHeight, ratio];
       }
-
       requestAnimationFrame(predictWebcam);
-    };
+    }
 
-    createFaceLandmarker();
+    (async()=>{
+      try {
+        await setupCamera();
+        await loadFaceLandmarker();
+        predictWebcam();
+      } catch(e) {
+        console.error(e);
+        alert('Please allow webcam access and reload');
+      }
+    })();
   </script>
 </body>
 </html>
