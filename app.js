@@ -1,5 +1,8 @@
-import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js';
+// Do NOT import tfjs here
 import { FilesetResolver, FaceLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
+console.log('TensorFlow.js version:', tf?.version?.tfjs);
+
+// ...use tf.tensor2d, tf.sequential, etc, as usual
 
 window.addEventListener('DOMContentLoaded', () => {
   // --- DOM refs ---
