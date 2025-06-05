@@ -2,38 +2,188 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Singing Machine – TF.js Classifier</title>
+  <title>Singing Machine – TF.js Classifier (Enhanced)</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js"></script>
   <style>
-    #controls {
-      margin-top: 10px;
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
     }
-    button, select {
-      padding: 10px;
-      margin-right: 10px;
+    
+    .video-container {
+      position: relative;
+      display: inline-block;
+      margin-bottom: 20px;
+    }
+    
+    #webcam {
+      display: none;
+    }
+    
+    #output {
+      border: 2px solid #333;
+      border-radius: 8px;
+    }
+    
+    .mouth-highlight {
+      position: absolute;
+      border: 3px solid lime;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    
+    #controls {
+      background: #f5f5f5;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    
+    .control-group {
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    button {
+      padding: 12px 20px;
       font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    
+    button:hover {
+      opacity: 0.8;
+    }
+    
+    .btn-primary {
+      background-color: #007bff;
+      color: white;
+    }
+    
+    .btn-success {
+      background-color: #28a745;
+      color: white;
+    }
+    
+    .btn-warning {
+      background-color: #ffc107;
+      color: black;
+    }
+    
+    select {
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    
+    .stats {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+    }
+    
+    .vowel-count {
+      display: inline-block;
+      margin: 5px 10px;
+      padding: 5px 10px;
+      background: #e9ecef;
+      border-radius: 15px;
+      font-weight: bold;
+    }
+    
+    #prediction {
+      font-size: 24px;
+      font-weight: bold;
+      color: #28a745;
+      margin-left: 15px;
+    }
+    
+    .status {
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+    
+    .status.success {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .status.error {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    
+    .features-display {
+      font-family: monospace;
+      background: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
-  <h1>Singing Machine – TF.js Classifier</h1>
-  <video id="webcam" autoplay playsinline width="640" height="480"></video>
-  <canvas id="output" width="640" height="480"></canvas>
+  <h1>🎤 Enhanced Vowel Classifier for Voice Research</h1>
+  
+  <div class="video-container">
+    <video id="webcam" autoplay playsinline width="640" height="480"></video>
+    <canvas id="output" width="640" height="480"></canvas>
+    <div id="mouthHighlight" class="mouth-highlight" style="display: none;"></div>
+  </div>
 
   <div id="controls">
-    <label for="intendedVowel">Label:</label>
-    <select id="intendedVowel">
-      <option value="A">A</option>
-      <option value="E">E</option>
-      <option value="I">I</option>
-      <option value="O">O</option>
-      <option value="U">U</option>
-    </select>
+    <div class="control-group">
+      <label for="intendedVowel"><strong>Select Vowel to Practice:</strong></label>
+      <select id="intendedVowel">
+        <option value="A">A (/a/ - "ah" sound)</option>
+        <option value="E">E (/e/ - "eh" sound)</option>
+        <option value="I">I (/i/ - "ee" sound)</option>
+        <option value="O">O (/o/ - "oh" sound)</option>
+        <option value="U">U (/u/ - "oo" sound)</option>
+      </select>
+    </div>
 
-    <button id="addExample">Add Example</button>
-    <button id="trainModel">Train Model</button>
-    <button id="predict">Predict</button>
-    <span id="prediction" style="font-size: 20px; font-weight: bold;"></span>
+    <div class="control-group">
+      <button class="btn-primary" onclick="addExample()">📸 Capture Example</button>
+      <button class="btn-success" onclick="trainModel()" id="trainBtn">🧠 Train Model</button>
+      <button class="btn-warning" onclick="togglePrediction()" id="predictBtn">🔮 Toggle Prediction</button>
+      <span id="prediction"></span>
+    </div>
+
+    <div class="control-group">
+      <button onclick="clearData()">🗑️ Clear All Data</button>
+      <button onclick="resetModel()">🔄 Reset Model</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <h3>📊 Training Data Statistics</h3>
+    <div id="vowelCounts">
+      <span class="vowel-count">A: <span id="countA">0</span></span>
+      <span class="vowel-count">E: <span id="countE">0</span></span>
+      <span class="vowel-count">I: <span id="countI">0</span></span>
+      <span class="vowel-count">O: <span id="countO">0</span></span>
+      <span class="vowel-count">U: <span id="countU">0</span></span>
+      <span class="vowel-count">Total: <span id="totalCount">0</span></span>
+    </div>
+    
+    <div id="modelStatus" class="status" style="display: none;"></div>
+    
+    <div class="features-display">
+      <strong>Current Features:</strong>
+      <div id="featuresDisplay">Width: -, Height: -, Ratio: -</div>
+    </div>
   </div>
 
   <script type="module">
@@ -42,107 +192,306 @@
       FaceLandmarker
     } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
 
+    // Global variables
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('output');
     const ctx = canvas.getContext('2d');
     const intendedVowelSelector = document.getElementById("intendedVowel");
     const predictionSpan = document.getElementById("prediction");
+    const mouthHighlight = document.getElementById("mouthHighlight");
 
     let faceLandmarker;
     let currentFeatures = [];
     let examples = [];
     let labels = [];
     let model;
+    let isPredicting = false;
+    let isModelTrained = false;
 
     const labelToIndex = { A: 0, E: 1, I: 2, O: 3, U: 4 };
     const indexToLabel = ["A", "E", "I", "O", "U"];
+    const vowelCounts = { A: 0, E: 1, I: 0, O: 0, U: 0 };
 
-    document.getElementById("addExample").addEventListener("click", () => {
+    // Make functions globally accessible for HTML onclick
+    window.addExample = addExample;
+    window.trainModel = trainModel;
+    window.togglePrediction = togglePrediction;
+    window.clearData = clearData;
+    window.resetModel = resetModel;
+
+    function addExample() {
       const label = intendedVowelSelector.value;
       if (currentFeatures.length === 3) {
-        examples.push(currentFeatures);
+        // Normalize features for better training stability
+        const normalizedFeatures = normalizeFeatures(currentFeatures);
+        examples.push(normalizedFeatures);
         labels.push(labelToIndex[label]);
-        console.log("Example added for", label, currentFeatures);
+        vowelCounts[label]++;
+        
+        updateVowelCounts();
+        const featureString = normalizedFeatures.map(f => f.toFixed(3)).join(', ');
+        showStatus('Example added for vowel "' + label + '"! Features: [' + featureString + ']', 'success');
+        console.log("Example added for", label, normalizedFeatures);
+      } else {
+        showStatus("No face detected! Please ensure your face is visible to the camera.", 'error');
       }
-    });
+    }
 
-    document.getElementById("trainModel").addEventListener("click", async () => {
-      const xs = tf.tensor2d(examples);
-      const ys = tf.oneHot(tf.tensor1d(labels, 'int32'), 5);
+    async function trainModel() {
+      if (examples.length < 10) {
+        showStatus("Need at least 10 examples to train the model. Current: " + examples.length, 'error');
+        return;
+      }
 
-      model = tf.sequential();
-      model.add(tf.layers.dense({ inputShape: [3], units: 16, activation: 'relu' }));
-      model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-      model.add(tf.layers.dense({ units: 5, activation: 'softmax' }));
+      try {
+        showStatus("Training model... This may take a moment.", 'success');
+        
+        const xs = tf.tensor2d(examples);
+        const ys = tf.oneHot(tf.tensor1d(labels, 'int32'), 5);
 
-      model.compile({ optimizer: 'adam', loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
-      await model.fit(xs, ys, { epochs: 30, shuffle: true });
-      console.log("Model trained.");
-    });
+        // Create model with dropout for better generalization
+        model = tf.sequential();
+        model.add(tf.layers.dense({ 
+          inputShape: [3], 
+          units: 32, 
+          activation: 'relu',
+          kernelRegularizer: tf.regularizers.l2({ l2: 0.001 })
+        }));
+        model.add(tf.layers.dropout({ rate: 0.3 }));
+        model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+        model.add(tf.layers.dropout({ rate: 0.2 }));
+        model.add(tf.layers.dense({ units: 5, activation: 'softmax' }));
 
-    document.getElementById("predict").addEventListener("click", async () => {
-      if (!model || currentFeatures.length !== 3) return;
-      const input = tf.tensor2d([currentFeatures]);
-      const prediction = model.predict(input);
-      const index = (await prediction.argMax(1).data())[0];
-      predictionSpan.innerText = `Predicted: ${indexToLabel[index]}`;
-    });
+        model.compile({ 
+          optimizer: tf.train.adam(0.001), 
+          loss: 'categoricalCrossentropy', 
+          metrics: ['accuracy'] 
+        });
+
+        const history = await model.fit(xs, ys, { 
+          epochs: 50, 
+          shuffle: true,
+          validationSplit: 0.2,
+          callbacks: {
+            onEpochEnd: (epoch, logs) => {
+              if (epoch % 10 === 0) {
+                console.log('Epoch ' + epoch + ': loss = ' + logs.loss.toFixed(4) + ', accuracy = ' + logs.acc.toFixed(4));
+              }
+            }
+          }
+        });
+
+        const finalAccuracy = (history.history.acc[history.history.acc.length - 1] * 100).toFixed(1);
+        isModelTrained = true;
+        showStatus('Model trained successfully! Final accuracy: ' + finalAccuracy + '%', 'success');
+        
+        // Cleanup tensors
+        xs.dispose();
+        ys.dispose();
+        
+      } catch (error) {
+        showStatus("Error training model: " + error.message, 'error');
+        console.error("Training error:", error);
+      }
+    }
+
+    function togglePrediction() {
+      console.log("Toggle prediction clicked. Model trained:", isModelTrained, "Examples:", examples.length);
+      
+      if (!isModelTrained) {
+        showStatus("Please train the model first! You need at least 10 examples.", 'error');
+        return;
+      }
+      
+      isPredicting = !isPredicting;
+      const btn = document.getElementById('predictBtn');
+      
+      if (isPredicting) {
+        btn.textContent = '⏹️ Stop Prediction';
+        btn.className = 'btn-warning';
+        showStatus("Real-time prediction started! Make vowel shapes to see predictions.", 'success');
+        console.log("Prediction mode ON");
+      } else {
+        btn.textContent = '🔮 Start Prediction';
+        btn.className = 'btn-success';
+        predictionSpan.textContent = '';
+        showStatus("Prediction stopped.", 'success');
+        console.log("Prediction mode OFF");
+      }
+    }
+
+    function clearData() {
+      examples = [];
+      labels = [];
+      Object.keys(vowelCounts).forEach(key => vowelCounts[key] = 0);
+      updateVowelCounts();
+      showStatus("All training data cleared!", 'success');
+    }
+
+    function resetModel() {
+      if (model) {
+        model.dispose();
+        model = null;
+      }
+      isModelTrained = false;
+      isPredicting = false;
+      predictionSpan.textContent = '';
+      document.getElementById('predictBtn').textContent = '🔮 Toggle Prediction';
+      showStatus("Model reset!", 'success');
+    }
+
+    function normalizeFeatures(features) {
+      // Simple min-max normalization - you might want to adjust these ranges based on your data
+      const [width, height, ratio] = features;
+      return [
+        Math.min(Math.max(width / 200, 0), 1),  // Normalize width to 0-1
+        Math.min(Math.max(height / 100, 0), 1), // Normalize height to 0-1
+        Math.min(Math.max(ratio, 0), 2)         // Ratio can vary more
+      ];
+    }
+
+    function updateVowelCounts() {
+      Object.keys(vowelCounts).forEach(vowel => {
+        document.getElementById(`count${vowel}`).textContent = vowelCounts[vowel];
+      });
+      const total = Object.values(vowelCounts).reduce((sum, count) => sum + count, 0);
+      document.getElementById('totalCount').textContent = total;
+    }
+
+    function showStatus(message, type) {
+      const statusDiv = document.getElementById('modelStatus');
+      statusDiv.textContent = message;
+      statusDiv.className = `status ${type}`;
+      statusDiv.style.display = 'block';
+      
+      // Auto-hide after 3 seconds for success messages
+      if (type === 'success') {
+        setTimeout(() => {
+          statusDiv.style.display = 'none';
+        }, 3000);
+      }
+    }
+
+    async function predict() {
+      if (!model || !isPredicting || currentFeatures.length !== 3) {
+        if (!model) console.log("No model available");
+        if (!isPredicting) console.log("Prediction is turned off");
+        if (currentFeatures.length !== 3) console.log("No valid features detected");
+        return;
+      }
+      
+      try {
+        const normalizedFeatures = normalizeFeatures(currentFeatures);
+        console.log("Making prediction with features:", normalizedFeatures);
+        
+        const input = tf.tensor2d([normalizedFeatures]);
+        const prediction = model.predict(input);
+        const probabilities = await prediction.data();
+        const maxIndex = probabilities.indexOf(Math.max(...probabilities));
+        const confidence = (probabilities[maxIndex] * 100).toFixed(1);
+        
+        console.log("Prediction:", indexToLabel[maxIndex], "Confidence:", confidence + "%");
+        predictionSpan.innerHTML = 'Predicted: <strong>' + indexToLabel[maxIndex] + '</strong> (' + confidence + '%)';
+        
+        // Cleanup
+        input.dispose();
+        prediction.dispose();
+      } catch (error) {
+        console.error("Prediction error:", error);
+        showStatus("Prediction error: " + error.message, 'error');
+      }
+    }
 
     const createFaceLandmarker = async () => {
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-      );
+      try {
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+        );
 
-      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-          delegate: "GPU"
-        },
-        outputFaceBlendshapes: true,
-        runningMode: "VIDEO",
-        numFaces: 1
-      });
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            delegate: "GPU"
+          },
+          outputFaceBlendshapes: true,
+          runningMode: "VIDEO",
+          numFaces: 1
+        });
 
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.srcObject = stream;
-      video.onloadeddata = () => {
-        predictWebcam();
-      };
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.onloadeddata = () => {
+          showStatus("Camera and face tracking initialized successfully!", 'success');
+          predictWebcam();
+        };
+      } catch (error) {
+        showStatus("Error initializing camera or face tracking: " + error.message, 'error');
+        console.error("Initialization error:", error);
+      }
     };
 
     const predictWebcam = async () => {
-      const results = await faceLandmarker.detectForVideo(video, Date.now());
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      if (!faceLandmarker) return;
+      
+      try {
+        const results = await faceLandmarker.detectForVideo(video, Date.now());
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      if (results.faceLandmarks.length > 0) {
-        const landmarks = results.faceLandmarks[0];
+        if (results.faceLandmarks.length > 0) {
+          const landmarks = results.faceLandmarks[0];
 
-        for (const point of landmarks) {
+          // Draw all landmarks
+          for (const point of landmarks) {
+            ctx.beginPath();
+            ctx.arc(point.x * canvas.width, point.y * canvas.height, 1, 0, 2 * Math.PI);
+            ctx.fillStyle = "cyan";
+            ctx.fill();
+          }
+
+          // Extract mouth landmarks (using more precise lip landmarks)
+          const upperLip = landmarks[13];
+          const lowerLip = landmarks[14];
+          const leftCorner = landmarks[61];
+          const rightCorner = landmarks[291];
+
+          // Calculate mouth dimensions
+          const lipHeight = Math.abs(lowerLip.y - upperLip.y);
+          const lipWidth = Math.abs(rightCorner.x - leftCorner.x);
+          const mouthHeight = lipHeight * canvas.height;
+          const mouthWidth = lipWidth * canvas.width;
+          const ratio = mouthHeight / mouthWidth;
+
+          currentFeatures = [mouthWidth, mouthHeight, ratio];
+
+          // Update features display
+          document.getElementById('featuresDisplay').textContent = 
+            'Width: ' + mouthWidth.toFixed(1) + 'px, Height: ' + mouthHeight.toFixed(1) + 'px, Ratio: ' + ratio.toFixed(3);
+
+          // Highlight mouth area
+          const centerX = (leftCorner.x + rightCorner.x) * canvas.width / 2;
+          const centerY = (upperLip.y + lowerLip.y) * canvas.height / 2;
+          
           ctx.beginPath();
-          ctx.arc(point.x * canvas.width, point.y * canvas.height, 2, 0, 2 * Math.PI);
-          ctx.fillStyle = "cyan";
-          ctx.fill();
+          ctx.ellipse(centerX, centerY, mouthWidth * 0.7, mouthHeight * 1.2, 0, 0, 2 * Math.PI);
+          ctx.strokeStyle = "lime";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Run prediction if enabled
+          await predict();
+        } else {
+          currentFeatures = [];
+          document.getElementById('featuresDisplay').textContent = 'Width: -, Height: -, Ratio: -';
         }
-
-        const topLip = landmarks[13];
-        const bottomLip = landmarks[14];
-        const leftCorner = landmarks[61];
-        const rightCorner = landmarks[291];
-
-        const lipHeight = Math.hypot(bottomLip.x - topLip.x, bottomLip.y - topLip.y);
-        const lipWidth = Math.hypot(rightCorner.x - leftCorner.x, rightCorner.y - leftCorner.y);
-
-        const mouthHeight = lipHeight * canvas.height;
-        const mouthWidth = lipWidth * canvas.width;
-        const ratio = mouthHeight / mouthWidth;
-
-        currentFeatures = [mouthWidth, mouthHeight, ratio];
+      } catch (error) {
+        console.error("Webcam processing error:", error);
       }
 
       requestAnimationFrame(predictWebcam);
     };
 
+    // Initialize everything
     createFaceLandmarker();
   </script>
 </body>
